@@ -1,0 +1,18 @@
+{
+    "name": "_GameCore",
+    "rootNamespace": "Galich.GameCore",
+    "references": [
+        "GUID:4bfb9a330f7882c4197f9fe53557bd9c",
+        "GUID:75469ad4d38634e559750d17036d5f7c",
+        "GUID:e893ce25e8fe8f04ca049db0efb825ef"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
