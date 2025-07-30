@@ -86,6 +86,7 @@ namespace Galich.GameCore
             LandCheck();
             WallSlideCheck();
             WallJumpCheck();
+            DashCheck();
         }
 
         private void FixedUpdate()
@@ -95,6 +96,7 @@ namespace Galich.GameCore
             Fall();
             WallSlide();
             WallJump();
+            Dash();
 
             if (_isGrounded)
             {
@@ -149,6 +151,12 @@ namespace Galich.GameCore
             if (!ShouldApplyPostWallJumpBuffer())
             {
                 _wallJumpPostBufferTimer -= Time.deltaTime;
+            }
+
+            // dash timer
+            if (_isGrounded)
+            {
+                _dashOnGroundTimer -= Time.deltaTime;
             }
         }
 
@@ -682,12 +690,153 @@ namespace Galich.GameCore
 
         private void DashCheck()
         {
+            if (InputManager.DashWasPressed)
+            {
+                // ground dash
+                if (_isGrounded && _dashOnGroundTimer < 0f && !_isDashing)
+                {
+                    InitiateDash();
+                }
 
+                // air dash
+                else if (!_isGrounded && !_isDashing && _numberOfDashesUsed < _movementStats.NumberOfDashes)
+                {
+                    _isAirDashing = true;
+                    InitiateDash();
+
+                    // left a wall slide but dashed within the wall jump post buffer time
+                    if (_wallJumpPostBufferTimer > 0f)
+                    {
+                        _numberOfJumpsUsed--;
+
+                        if (_numberOfJumpsUsed < 0)
+                        {
+                            _numberOfJumpsUsed = 0;
+                        }
+                    }
+                }
+            }
+        }
+
+        private Vector2 _closestDirection = Vector2.zero;
+        private float _minDistance = 0f;
+        private float _distance = 0f;
+        private bool _isDiagonal;
+
+        private void InitiateDash()
+        {
+            _dashDirection = InputManager.Movement;
+            _closestDirection = Vector2.zero;
+            _minDistance = Vector2.Distance(_dashDirection, _movementStats.DashDirections[0]);
+
+            for (int i = 0; i < _movementStats.DashDirections.Length; i++)
+            {
+                if (_dashDirection == _movementStats.DashDirections[i])
+                {
+                    _closestDirection = _dashDirection;
+                    break;
+                }
+
+                _distance = Vector2.Distance(_dashDirection, _movementStats.DashDirections[i]);
+
+                // check if this is a diagonal direction and apply bias
+                _isDiagonal = Mathf.Abs(_movementStats.DashDirections[i].x) == 1 && Mathf.Abs(_movementStats.DashDirections[i].y) == 1;
+                
+                if (_isDiagonal)
+                {
+                    _distance -= _movementStats.DashDiagonallyBias;
+                }
+                else if (_distance < _minDistance)
+                {
+                    _minDistance = _distance;
+                    _closestDirection = _movementStats.DashDirections[i];
+                }
+            }
+
+            // handle direction with no input
+            if (_closestDirection == Vector2.zero)
+            {
+                if (_isFacingRight)
+                {
+                    _closestDirection = Vector2.right;
+                }
+                else
+                {
+                    _closestDirection = Vector2.left;
+                }
+            }
+
+            _dashDirection = _closestDirection;
+            _numberOfDashesUsed++;
+            _isDashing = true;
+            _dashTimer = 0f;
+            _dashOnGroundTimer = _movementStats.TimeBetweenDashesOnGround;
+
+            ResetJumpValues();
+            ResetWallJumpValues();
+            StopWallSlide();
         }
 
         private void Dash()
         {
+            if (_isDashing)
+            {
+                // stop the dash after the timer
+                _dashTimer += Time.fixedDeltaTime;
 
+                if (_dashTimer >= _movementStats.DashTime)
+                {
+                    if (_isGrounded)
+                    {
+                        ResetDashes();
+                    }
+
+                    _isAirDashing = false;
+                    _isDashing = false;
+
+                    if (!_isJumping && !_isWallJumping)
+                    {
+                        _dashFastFallTime = 0f;
+                        _dashFastFallReleaseSpeed = _verticalVelocity;
+
+                        if (!_isGrounded)
+                        {
+                            _isDashFastFalling = true;
+                        }
+                    }
+
+                    return;
+                }
+
+                _horizontalVelocity = _movementStats.DashSpeed * _dashDirection.x;
+
+                if (_dashDirection.y != 0f || _isAirDashing)
+                {
+                    _verticalVelocity = _movementStats.DashSpeed * _dashDirection.y;
+                }
+            }
+
+            // handle dash cut time
+            else if (_isDashFastFalling)
+            {
+                if (_verticalVelocity > 0f)
+                {
+                    if (_dashFastFallTime < _movementStats.DashTimeForUpwardsCancel)
+                    {
+                        _verticalVelocity = Mathf.Lerp(_dashFastFallReleaseSpeed, 0f, _dashFastFallTime / _movementStats.DashTimeForUpwardsCancel);
+                    }
+                    else if (_dashFastFallTime >= _movementStats.DashTimeForUpwardsCancel)
+                    {
+                        _verticalVelocity += _movementStats.Gravity * _movementStats.DashGravityOnReleaseMultiplier * Time.fixedDeltaTime;
+                    }
+
+                    _dashFastFallTime += Time.fixedDeltaTime;
+                }
+                else
+                {
+                    _verticalVelocity += _movementStats.Gravity * _movementStats.DashGravityOnReleaseMultiplier * Time.fixedDeltaTime;
+                }
+            }
         }
 
         private void ResetDashValues()

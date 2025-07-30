@@ -7,7 +7,7 @@ namespace Galich.GameCore
     {
         private enum InputActions
         {
-            Move, Jump, Run,
+            Move, Jump, Run, Dash,
         }
 
         private static PlayerInput _playerInput;
@@ -16,11 +16,12 @@ namespace Galich.GameCore
         private static bool _jumpIsHeld;
         private static bool _jumpWasReleased;
         private static bool _runIsHeld;
+        private static bool _dashWasPressed;
 
         private InputAction _moveAction;
         private InputAction _jumpAction;
         private InputAction _runAction;
-        private PlayerInputActions _inputActions;
+        private InputAction _dashAction;
 
         public static PlayerInput PlayerInput => _playerInput;
         public static Vector2 Movement => _movement;
@@ -28,6 +29,7 @@ namespace Galich.GameCore
         public static bool JumpIsHeld => _jumpIsHeld;
         public static bool JumpWasReleased => _jumpWasReleased;
         public static bool RunIsHeld => _runIsHeld;
+        public static bool DashWasPressed => _dashWasPressed;
 
         private void Awake()
         {
@@ -36,7 +38,7 @@ namespace Galich.GameCore
             _moveAction = _playerInput.actions[$"{InputActions.Move}"];
             _jumpAction = _playerInput.actions[$"{InputActions.Jump}"];
             _runAction = _playerInput.actions[$"{InputActions.Run}"];
-
+            _dashAction = _playerInput.actions[$"{InputActions.Dash}"];
         }
 
         private void Update()
@@ -48,6 +50,7 @@ namespace Galich.GameCore
             _jumpWasReleased = _jumpAction.WasReleasedThisFrame();
 
             _runIsHeld = _runAction.IsPressed();
+            _dashWasPressed = _dashAction.WasPressedThisFrame();
         }
     }
 }
