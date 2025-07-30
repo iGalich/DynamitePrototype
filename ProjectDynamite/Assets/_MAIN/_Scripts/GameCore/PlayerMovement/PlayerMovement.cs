@@ -7,28 +7,71 @@ namespace Galich.GameCore
         [SerializeField] private PlayerMovementStatsSO _movementStats;
         [SerializeField] private Collider2D _feetCollider;
         [SerializeField] private Collider2D _bodyCollider;
-        [SerializeField] private float _verticalVelocity;
 
         private Rigidbody2D _rigidBody;
-        private Vector2 _moveVelocity;
+
+        // movement variables
+        private float _horizontalVelocity;
         private bool _isFacingRight;
+        private float _targetVelocity = 0f;
+
+        // collision check variables
         private RaycastHit2D _groundHit;
         private RaycastHit2D _headHit;
+        private RaycastHit2D _wallHit;
+        private RaycastHit2D _lastWallHit;
         private bool _isGrounded;
         private bool _bumpedHead;
-        private Vector2 _targetVelocity = Vector2.zero;
+        private bool _isTouchingWall;
+
+        // jump variables
+        [SerializeField] private float _verticalVelocity;
         private bool _isJumping;
         private bool _isFastFalling;
         private bool _isFalling;
         private float _fastFallTime;
         private float _fastFallReleaseSpeed;
         private int _numberOfJumpsUsed;
+
+        // apex variables
         private float _apexPoint;
         private float _timePastApexThreshold;
         private bool _isPastApexThreshold;
+
+        // jump buffer variables
         private float _jumpBufferTime;
         private bool _jumpReleaseDuringBuffer;
+
+        // coyote variables
         private float _coyoteTimer;
+
+        // wall slide variables
+        private bool _isWallSliding;
+        private bool _isWallSlideFalling;
+
+        // wall jump variables
+        private bool _useWallJumpMoveStats;
+        private bool _isWallJumping;
+        private float _wallJumpTime;
+        private bool _isWallJumpFastFalling;
+        private bool _isWallJumpFalling;
+        private float _wallJumpFastFallTime;
+        private float _wallJumpFastFallReleaseSpeed;
+        private float _wallJumpPostBufferTimer;
+        private float _wallJumpApexPoint;
+        private float _timePastWallJumpApexThreshold;
+        private bool _isPastWallJumpApexThreshold;
+
+        // dash variables
+        private bool _isDashing;
+        private bool _isAirDashing;
+        private float _dashTimer;
+        private float _dashOnGroundTimer;
+        private int _numberOfDashesUsed;
+        private Vector2 _dashDirection;
+        private bool _isDashFastFalling;
+        private float _dashFastFallTime;
+        private float _dashFastFallReleaseSpeed;
 
         private void Awake()
         {
@@ -40,12 +83,18 @@ namespace Galich.GameCore
         {
             CountTimers();
             JumpChecks();
+            LandCheck();
+            WallSlideCheck();
+            WallJumpCheck();
         }
 
         private void FixedUpdate()
         {
             CollisionChecks();
             Jump();
+            Fall();
+            WallSlide();
+            WallJump();
 
             if (_isGrounded)
             {
@@ -53,8 +102,33 @@ namespace Galich.GameCore
             }
             else
             {
-                Move(_movementStats.AirAcceleration, _movementStats.AirDeceleration, InputManager.Movement);
+                // wall jumping
+                if (_useWallJumpMoveStats)
+                {
+                    Move(_movementStats.WallJumpMoveAceeleration, _movementStats.WallJumpMoveDeceleration, InputManager.Movement);
+                }
+                // airborne
+                else
+                {
+                    Move(_movementStats.AirAcceleration, _movementStats.AirDeceleration, InputManager.Movement);
+                }
             }
+
+            ApplyVelocity();
+        }
+
+        private void ApplyVelocity()
+        {
+            if (!_isDashing)
+            {
+                _verticalVelocity = Mathf.Clamp(_verticalVelocity, -_movementStats.MaxFallSpeed, 50f);
+            }
+            else
+            {
+                _verticalVelocity = Mathf.Clamp(_verticalVelocity, -50f, 50f);
+            }
+            
+            _rigidBody.linearVelocity = new(_horizontalVelocity, _verticalVelocity);
         }
 
         #region Timers
@@ -71,16 +145,71 @@ namespace Galich.GameCore
             {
                 _coyoteTimer = _movementStats.JumpCoyoteTime;
             }
+
+            if (!ShouldApplyPostWallJumpBuffer())
+            {
+                _wallJumpPostBufferTimer -= Time.deltaTime;
+            }
+        }
+
+        #endregion
+
+        #region Land/Fall
+
+        private void LandCheck()
+        {
+            if ((_isJumping || _isFalling || _isWallJumpFalling || _isWallJumping || _isWallSlideFalling || _isWallSliding || _isDashFastFalling) && _isGrounded && _verticalVelocity <= 0f)
+            {
+                ResetJumpValues();
+                StopWallSlide();
+                ResetWallJumpValues();
+                ResetDashes();
+                _numberOfJumpsUsed = 0;
+                _verticalVelocity = Physics2D.gravity.y;
+
+                if (_isDashFastFalling && _isGrounded)
+                {
+                    ResetDashValues();
+                    return;
+                }
+
+                ResetDashValues();
+            }
+        }
+
+        private void Fall()
+        {
+            if (!_isGrounded && !_isJumping && !_isWallSliding && !_isWallJumping && !_isDashing && !_isDashFastFalling)
+            {
+                if (!_isFalling)
+                {
+                    _isFalling = true;
+                }
+
+                _verticalVelocity += _movementStats.Gravity * Time.fixedDeltaTime;
+            }
         }
 
         #endregion
 
         #region Jump
 
+        private void ResetJumpValues()
+        {
+            _isJumping = false;
+            _isFalling = false;
+            _isFastFalling = false;
+            _fastFallTime = 0f;
+            _isPastApexThreshold = false;
+        }
+
         private void JumpButtonPressed()
         {
             if (InputManager.JumpWasPressed)
             {
+                if (_isWallSlideFalling && _wallJumpPostBufferTimer >= 0f) return;
+                else if (_isWallSliding || (_isTouchingWall && !_isGrounded)) return;
+
                 _jumpBufferTime = _movementStats.JumpBufferTime;
                 _jumpReleaseDuringBuffer = false;
             }
@@ -128,31 +257,22 @@ namespace Galich.GameCore
             }
 
             // double jump
-            else if (_jumpBufferTime > 0f && _isJumping && _numberOfJumpsUsed < _movementStats.NumberOfJumpsAllowed)
+            else if (_jumpBufferTime > 0f && (_isJumping || _isWallJumping || _isWallSlideFalling || _isAirDashing || _isDashFastFalling) && !_isTouchingWall && _numberOfJumpsUsed < _movementStats.NumberOfJumpsAllowed)
             {
                 _isFastFalling = false;
                 InitiateJump(1);
+
+                if (_isDashFastFalling)
+                {
+                    _isDashFastFalling = false;
+                }
             }
 
             // air jump after coyote time lapsed
-            else if (_jumpBufferTime > 0f && _isFalling && _numberOfJumpsUsed < _movementStats.NumberOfJumpsAllowed - 1)
+            else if (_jumpBufferTime > 0f && _isFalling && !_isWallSlideFalling && _numberOfJumpsUsed < _movementStats.NumberOfJumpsAllowed - 1)
             {
                 InitiateJump(2);
                 _isFalling = false;
-            }
-        }
-
-        private void Landed()
-        {
-            if ((_isJumping || _isFalling) && _isGrounded && _verticalVelocity <= 0f)
-            {
-                _isJumping = false;
-                _isFalling = false;
-                _isFastFalling = false;
-                _fastFallTime = 0f;
-                _isPastApexThreshold = false;
-                _numberOfJumpsUsed = 0;
-                _verticalVelocity = Physics2D.gravity.y;
             }
         }
 
@@ -161,7 +281,6 @@ namespace Galich.GameCore
             JumpButtonPressed();
             JumpButtonReleased();
             InitiateJump();
-            Landed();
         }
 
         private void InitiateJump(int numberOfJumpsUsed)
@@ -171,6 +290,7 @@ namespace Galich.GameCore
                 _isJumping = true;
             }
 
+            ResetWallJumpValues();
             _jumpBufferTime = 0f;
             _numberOfJumpsUsed += numberOfJumpsUsed;
             _verticalVelocity = _movementStats.InitialJumpVelocity;
@@ -220,7 +340,7 @@ namespace Galich.GameCore
                     }
 
                     // gravity on ascending but not past apex threshold
-                    else
+                    else if (!_isFastFalling)
                     {
                         _verticalVelocity += _movementStats.Gravity * Time.fixedDeltaTime;
 
@@ -263,29 +383,11 @@ namespace Galich.GameCore
             }
         }
 
-        private void NormalGravityWhileFalling()
-        {
-            if (!_isGrounded && !_isJumping)
-            {
-                if (!_isFalling)
-                {
-                    _isFalling = true;
-                }
-
-                _verticalVelocity += _movementStats.Gravity * Time.fixedDeltaTime;
-            }
-        }
-
         private void Jump()
         {
             ApplyGravityWhileJumping();
 
             JumpCut();
-
-            NormalGravityWhileFalling();
-
-            _verticalVelocity = Mathf.Clamp(_verticalVelocity, -_movementStats.MaxFallSpeed, 50f);
-            _rigidBody.linearVelocity = new(_rigidBody.linearVelocity.x, _verticalVelocity);
         }
 
         #endregion
@@ -294,26 +396,26 @@ namespace Galich.GameCore
 
         private void Move(float acceleration, float deceleration, Vector2 moveInput)
         {
-            if (moveInput != Vector2.zero)
+            if (_isDashing) return;
+
+            if (Mathf.Abs(moveInput.x) >= _movementStats.MoveThreshold)
             {
                 TurnCheck(moveInput);
 
                 if (InputManager.RunIsHeld)
                 {
-                    _targetVelocity = new Vector2(moveInput.x, 0f) * _movementStats.MaxRunSpeed;
+                    _targetVelocity = moveInput.x * _movementStats.MaxRunSpeed;
                 }
                 else
                 {
-                    _targetVelocity = new Vector2(moveInput.x, 0f) * _movementStats.MaxWalkSpeed;
+                    _targetVelocity = moveInput.x * _movementStats.MaxWalkSpeed;
                 }
 
-                _moveVelocity = Vector2.Lerp(_moveVelocity, _targetVelocity, acceleration * Time.fixedDeltaTime);
-                _rigidBody.linearVelocity = new(_moveVelocity.x, _rigidBody.linearVelocity.y);
+                _horizontalVelocity = Mathf.Lerp(_horizontalVelocity, _targetVelocity, acceleration * Time.fixedDeltaTime);
             }
-            else if (moveInput == Vector2.zero)
+            else if (Mathf.Abs(moveInput.x) < _movementStats.MoveThreshold)
             {
-                _moveVelocity = Vector2.Lerp(_moveVelocity, Vector2.zero, deceleration * Time.fixedDeltaTime);
-                _rigidBody.linearVelocity = new(_moveVelocity.x, _rigidBody.linearVelocity.y);
+                _horizontalVelocity = Mathf.Lerp(_horizontalVelocity, 0f, deceleration * Time.fixedDeltaTime);
             }
         }
 
@@ -341,6 +443,262 @@ namespace Galich.GameCore
                 _isFacingRight = false;
                 transform.Rotate(0f, -180f, 0f);
             }
+        }
+
+        #endregion
+
+        #region Wall Slide
+
+        private void WallSlideCheck()
+        {
+            if (_isTouchingWall && !_isGrounded && !_isDashing)
+            {
+                if (_verticalVelocity < 0f && !_isWallSliding)
+                {
+                    ResetJumpValues();
+                    ResetWallJumpValues();
+                    ResetDashValues();
+
+                    if (_movementStats.ResetDashOnWallSlide)
+                    {
+                        ResetDashes();
+                    }
+
+                    _isWallSlideFalling = false;
+                    _isWallSliding = true;
+
+                    if (_movementStats.ResetJumpsOnWallSlide)
+                    {
+                        _numberOfJumpsUsed = 0;
+                    }
+                }
+            }
+            else if (_isWallSliding && !_isTouchingWall && !_isGrounded && !_isWallSlideFalling)
+            {
+                _isWallSlideFalling = true;
+                StopWallSlide();
+            }
+            else
+            {
+                StopWallSlide();
+            }
+        }
+
+        private void StopWallSlide()
+        {
+            if (_isWallSliding)
+            {
+                _numberOfJumpsUsed++;
+                _isWallSliding = false;
+            }
+        }
+
+        private void WallSlide()
+        {
+            if (_isWallSliding)
+            {
+                _verticalVelocity = Mathf.Lerp(_verticalVelocity, -_movementStats.WallSlideSpeed, _movementStats.WallSlideDecelrationSpeed * Time.fixedDeltaTime);
+            }
+        }
+
+        #endregion
+
+        #region Wall Jump
+
+        private void WallJumpFastFalling()
+        {
+            if (InputManager.JumpWasReleased && !_isWallSliding && !_isTouchingWall && _isWallJumping)
+            {
+                if (_verticalVelocity > 0f)
+                {
+                    if (_isPastWallJumpApexThreshold)
+                    {
+                        _isPastWallJumpApexThreshold = false;
+                        _isWallJumpFastFalling = true;
+                        _wallJumpFastFallTime = _movementStats.TimeForUpwardsCancel;
+                        _verticalVelocity = 0f;
+                    }
+                    else
+                    {
+                        _isWallJumpFastFalling = true;
+                        _wallJumpFastFallReleaseSpeed = _verticalVelocity;
+                    }
+                }
+            }
+        }
+
+        private void WallJumpCheck()
+        {
+            if (ShouldApplyPostWallJumpBuffer())
+            {
+                _wallJumpPostBufferTimer = _movementStats.WallJumpPostBufferTime;
+            }
+
+            WallJumpFastFalling();
+
+            // actual jump with post wall jump buffer time
+            if (InputManager.JumpWasPressed && _wallJumpPostBufferTimer > 0f)
+            {
+                InitiateWallJump();
+            }
+        }
+
+        private int _directionMultiplier = 0;
+        private Vector2 _hitPoint;
+
+        private void InitiateWallJump()
+        {
+            if (!_isWallJumping)
+            {
+                _isWallJumping = true;
+                _useWallJumpMoveStats = true;
+            }
+
+            StopWallSlide();
+            ResetJumpValues();
+            _wallJumpTime = 0f;
+            _verticalVelocity = _movementStats.InitialWallJumpVelocity;
+            _directionMultiplier = 0;
+            _hitPoint = _lastWallHit.collider.ClosestPoint(_bodyCollider.bounds.center);
+
+            if (_hitPoint.x > transform.position.x)
+            {
+                _directionMultiplier = - 1;
+            }
+            else
+            {
+                _directionMultiplier = 1;
+            }
+
+            _horizontalVelocity = Mathf.Abs(_movementStats.WallJumpDirection.x) * _directionMultiplier;
+        }
+
+        private void WallJump()
+        {
+            // apply wall jump gravity
+            if (_isWallJumping)
+            {
+                // time to take over movement controls while wall jumping
+                _wallJumpTime += Time.fixedDeltaTime;
+                
+                if (_wallJumpTime >= _movementStats.TimeTillJumpApex)
+                {
+                    _useWallJumpMoveStats = false;
+                }
+
+                // hit head
+                if (_bumpedHead)
+                {
+                    _isWallJumpFastFalling = true;
+                    _useWallJumpMoveStats = false;
+                }
+
+                // gravity in ascending
+                if (_verticalVelocity >= 0f)
+                {
+                    // apex controls
+                    _wallJumpApexPoint = Mathf.InverseLerp(_movementStats.WallJumpDirection.y, 0f, _verticalVelocity);
+
+                    if (_wallJumpApexPoint > _movementStats.ApexThreshold)
+                    {
+                        if (!_isPastWallJumpApexThreshold)
+                        {
+                            _isPastWallJumpApexThreshold = true;
+                            _timePastWallJumpApexThreshold = 0f;
+                        }
+
+                        if (_isPastWallJumpApexThreshold)
+                        {
+                            _timePastWallJumpApexThreshold += Time.fixedDeltaTime;
+
+                            if (_timePastWallJumpApexThreshold < _movementStats.ApexHangTime)
+                            {
+                                _verticalVelocity = 0f;
+                            }
+                            else
+                            {
+                                _verticalVelocity = -0.01f;
+                            }
+                        }
+                    }
+
+                    // gravity in ascending but not past apex threshold
+                    else if (!_isWallJumpFastFalling)
+                    {
+                        _verticalVelocity += _movementStats.WallJumpGravity * Time.fixedDeltaTime;
+
+                        if (_isPastWallJumpApexThreshold)
+                        {
+                            _isPastWallJumpApexThreshold = false;
+                        }
+                    }
+                }
+
+                // gravity on ascending
+                else if (!_isWallJumpFastFalling)
+                {
+                    _verticalVelocity += _movementStats.WallJumpGravity * Time.fixedDeltaTime;
+                }
+                else if (_verticalVelocity < 0f)
+                {
+                    if (!_isWallJumpFalling)
+                        _isWallJumpFalling = true;
+                }
+            }
+
+            // handle wall jump cut
+            if (_isWallJumpFastFalling)
+            {
+                if (_wallJumpFastFallTime >= _movementStats.TimeForUpwardsCancel)
+                {
+                    _verticalVelocity += _movementStats.WallJumpGravity * _movementStats.WallJumpGravityOnReleaseMultiplier * Time.fixedDeltaTime;
+                }
+                else if (_wallJumpFastFallTime < _movementStats.TimeForUpwardsCancel)
+                {
+                    _verticalVelocity = Mathf.Lerp(_wallJumpFastFallReleaseSpeed, 0f, (_wallJumpFastFallTime / _movementStats.TimeForUpwardsCancel));
+                }
+
+                _wallJumpFastFallTime += Time.fixedDeltaTime;
+            }
+        }
+
+        private bool ShouldApplyPostWallJumpBuffer() => !_isGrounded && (_isTouchingWall || _isWallSliding);
+
+        private void ResetWallJumpValues()
+        {
+            _isWallSlideFalling = false;
+            _useWallJumpMoveStats = false;
+            _isWallJumping = false;
+            _isWallJumpFastFalling = false;
+            _isWallJumpFalling = false;
+            _isPastWallJumpApexThreshold = false;
+            _wallJumpFastFallTime = 0f;
+            _wallJumpTime = 0f;
+        }
+
+        #endregion
+
+        #region Dash
+
+        private void DashCheck()
+        {
+
+        }
+
+        private void Dash()
+        {
+
+        }
+
+        private void ResetDashValues()
+        {
+            _isDashFastFalling = false;
+            _dashOnGroundTimer = -0.01f;
+        }
+
+        private void ResetDashes()
+        {
+            _numberOfDashesUsed = 0;
         }
 
         #endregion
@@ -417,11 +775,65 @@ namespace Galich.GameCore
             }
         }
 
+        private void IsTouchingWall()
+        {
+            float originEndPoint = 0f;
+
+            if (_isFacingRight)
+            {
+                originEndPoint = _bodyCollider.bounds.max.x;
+            }
+            else
+            {
+                originEndPoint = _bodyCollider.bounds.min.x;
+            }
+
+            float adjustedHeight = _bodyCollider.bounds.size.y * _movementStats.WallDetectionRayHeightMultiplier;
+            Vector2 boxCastOrigin = new(originEndPoint, _bodyCollider.bounds.center.y);
+            Vector2 boxCastSize = new(_movementStats.WallDetectionRayLength, adjustedHeight);
+
+            _wallHit = Physics2D.BoxCast(boxCastOrigin, boxCastSize, 0f, transform.right, _movementStats.WallDetectionRayLength, _movementStats.GroundLayer);
+
+            if (_wallHit.collider != null)
+            {
+                _lastWallHit = _wallHit;
+                _isTouchingWall = true;
+            }
+            else
+            {
+                _isTouchingWall = false;
+            }
+
+            if (_movementStats.DebugShowWallHitBox)
+            {
+                Color rayColor;
+
+                if (_isTouchingWall)
+                {
+                    rayColor = Color.green;
+                }
+                else
+                {
+                    rayColor = Color.red;
+                }
+
+                Vector2 boxBottomLeft = new(boxCastOrigin.x - boxCastSize.x / 2, boxCastOrigin.y - boxCastSize.y /2);
+                Vector2 boxBottomRight = new(boxCastOrigin.x + boxCastSize.x / 2, boxCastOrigin.y - boxCastSize.y / 2);
+                Vector2 boxTopLeft = new(boxCastOrigin.x - boxCastSize.x / 2, boxCastOrigin.y + boxCastSize.y / 2);
+                Vector2 boxTopRight = new(boxCastOrigin.x + boxCastSize.x / 2, boxCastOrigin.y + boxCastSize.y / 2);
+
+                Debug.DrawLine(boxBottomLeft, boxBottomRight, rayColor);
+                Debug.DrawLine(boxBottomRight, boxTopRight, rayColor);
+                Debug.DrawLine(boxTopRight, boxTopLeft, rayColor);
+                Debug.DrawLine(boxTopLeft, boxBottomLeft, rayColor);
+            }
+        }
 
         private void CollisionChecks()
         {
             IsGrounded();
             BumpedHead();
+            IsTouchingWall();
         }
 
         #endregion

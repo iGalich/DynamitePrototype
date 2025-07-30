@@ -12,11 +12,14 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 28987b5d8e70ff64ba0f7adfda0a7131, type: 3}
   m_Name: New Player Movement Stats SO
   m_EditorClassIdentifier: 
+  MoveThreshold: 0.25
   MaxWalkSpeed: 12.5
   GroundAcceleration: 5
   GroundDeceleration: 20
   AirAcceleration: 5
   AirDeceleration: 5
+  WallJumpMoveAceeleration: 5
+  WallJumpMoveDeceleration: 5
   MaxRunSpeed: 20
   JumpHeight: 6.5
   JumpHeightCompensationFactor: 1.054
@@ -29,14 +32,31 @@ MonoBehaviour:
   ApexHangTime: 0.05
   JumpBufferTime: 0.125
   JumpCoyoteTime: 0.1
+  ResetJumpsOnWallSlide: 1
+  WallSlideSpeed: 5
+  WallSlideDecelrationSpeed: 50
+  WallJumpDirection: {x: -20, y: 6.5}
+  WallJumpPostBufferTime: 0.125
+  WallJumpGravityOnReleaseMultiplier: 1
+  DashTime: 0.11
+  DashSpeed: 40
+  TimeBetweenDashesOnGround: 0.225
+  ResetDashOnWallSlide: 1
+  NumberOfDashes: 2
+  DashDiagonallyBias: 0.4
+  DashGravityOnReleaseMultiplier: 1
+  DashTimeForUpwardsCancel: 0.027
   GroundLayer:
     serializedVersion: 2
     m_Bits: 256
   GroundDetectionRayLength: 0.02
   HeadDetectionRayLength: 0.02
   HeadWidth: 0.75
+  WallDetectionRayLength: 0.125
+  WallDetectionRayHeightMultiplier: 0.9
   DebugShowIsGroundedBox: 1
   DebugShowHeadBumpBox: 1
+  DebugShowWallHitBox: 1
   ShowWalkJumpArc: 1
   ShowRunJumpArc: 1
   StopOnCollision: 1
